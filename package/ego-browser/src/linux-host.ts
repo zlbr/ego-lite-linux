@@ -25,6 +25,8 @@ type Space = {
   ownership: "agent" | "agentDelegatedToUser" | "user";
   activeTargetId?: string;
   state?: string;
+  handoffTimer?: ReturnType<typeof setTimeout>;
+  deleteTimer?: ReturnType<typeof setTimeout>;
 };
 
 type SnapshotOptions = {
@@ -35,6 +37,8 @@ type SnapshotOptions = {
 };
 
 const HOST_ID_START = 1_000_000_000;
+const DEFAULT_HANDOFF_IDLE_MS = 10 * 60 * 1000;
+const DEFAULT_DELETE_IDLE_MS = 60 * 60 * 1000;
 const INTERACTIVE_ROLES = new Set([
   "button",
   "checkbox",
@@ -85,6 +89,7 @@ export async function installLinuxChromiumHost(
 
   return async () => {
     if (target.ego === runtime) delete target.ego;
+    runtime.dispose();
     await pipe.close();
   };
 }
@@ -236,6 +241,14 @@ class LinuxEgoRuntime {
   readonly #spaces = new Map<number, Space>();
   #selectedSpaceId?: number;
   #nextSpaceId = 1;
+  readonly #handoffIdleMs = idleDuration(
+    "EGO_BROWSER_HANDOFF_IDLE_MS",
+    DEFAULT_HANDOFF_IDLE_MS,
+  );
+  readonly #deleteIdleMs = idleDuration(
+    "EGO_BROWSER_DELETE_IDLE_MS",
+    DEFAULT_DELETE_IDLE_MS,
+  );
   onCDPMessage?: (payload: string) => void;
   onSendCDPMessageError?: (message: unknown, errorCode?: string) => void;
 
@@ -245,6 +258,10 @@ class LinuxEgoRuntime {
 
   deliver(message: CdpMessage) {
     queueMicrotask(() => this.onCDPMessage?.(JSON.stringify(message)));
+  }
+
+  dispose() {
+    for (const space of this.#spaces.values()) this.#clearTimers(space);
   }
 
   async getBrowserVersion() {
@@ -312,6 +329,7 @@ class LinuxEgoRuntime {
       browserContextId,
     });
     space.activeTargetId = tab.result?.targetId;
+    this.#touch(space);
     return this.#descriptor(space);
   }
 
@@ -338,6 +356,7 @@ class LinuxEgoRuntime {
     }
     if (name !== undefined) space.name = name;
     space.ownership = "agent";
+    this.#touch(space);
     return this.#descriptor(space);
   }
 
@@ -390,6 +409,7 @@ class LinuxEgoRuntime {
 
   async closeTaskSpace() {
     const space = this.#space();
+    this.#clearTimers(space);
     await this.#pipe.command("Target.disposeBrowserContext", {
       browserContextId: space.browserContextId,
     });
@@ -401,18 +421,21 @@ class LinuxEgoRuntime {
   async completeTaskSpace() {
     const space = this.#space();
     space.ownership = "user";
+    this.#scheduleDeletion(space);
     return `${space.id} task space completed.`;
   }
 
   async handOffTaskSpace() {
     const space = this.#space();
     space.ownership = "agentDelegatedToUser";
+    this.#scheduleDeletion(space);
     return `${space.id} has been handed off to the user.`;
   }
 
   async takeOverTaskSpace() {
     const space = this.#space();
     space.ownership = "agent";
+    this.#touch(space);
     return `${space.id} has been taken over by the agent.`;
   }
 
@@ -502,7 +525,56 @@ class LinuxEgoRuntime {
     if (space.ownership !== "agent") {
       throw egoError("manual_takeover", "EGO_TASK_SPACE_USER_IN_CONTROL");
     }
+    this.#touch(space);
     return space;
+  }
+
+  #touch(space: Space) {
+    if (space.ownership !== "agent") return;
+    this.#clearTimers(space);
+    space.handoffTimer = setTimeout(() => {
+      if (this.#spaces.get(space.id) !== space || space.ownership !== "agent")
+        return;
+      space.handoffTimer = undefined;
+      space.ownership = "agentDelegatedToUser";
+    }, this.#handoffIdleMs);
+    space.handoffTimer.unref();
+    space.deleteTimer = setTimeout(
+      () => void this.#deleteExpiredSpace(space),
+      this.#deleteIdleMs,
+    );
+    space.deleteTimer.unref();
+  }
+
+  #scheduleDeletion(space: Space) {
+    this.#clearTimers(space);
+    space.deleteTimer = setTimeout(
+      () => void this.#deleteExpiredSpace(space),
+      this.#deleteIdleMs,
+    );
+    space.deleteTimer.unref();
+  }
+
+  async #deleteExpiredSpace(space: Space) {
+    if (this.#spaces.get(space.id) !== space) return;
+    this.#clearTimers(space);
+    try {
+      await this.#pipe.command("Target.disposeBrowserContext", {
+        browserContextId: space.browserContextId,
+      });
+      this.#spaces.delete(space.id);
+      if (this.#selectedSpaceId === space.id) this.#selectedSpaceId = undefined;
+    } catch {
+      // Keep the task discoverable and retry after the configured idle period.
+      this.#scheduleDeletion(space);
+    }
+  }
+
+  #clearTimers(space: Space) {
+    if (space.handoffTimer) clearTimeout(space.handoffTimer);
+    if (space.deleteTimer) clearTimeout(space.deleteTimer);
+    space.handoffTimer = undefined;
+    space.deleteTimer = undefined;
   }
 }
 
@@ -598,4 +670,16 @@ function egoError(message: string, code: string) {
 
 function invalidArgument(message: string) {
   return egoError(message, "EGO_INVALID_ARGUMENT");
+}
+
+function idleDuration(name: string, fallback: number) {
+  const configured = process.env[name];
+  if (configured === undefined || configured === "") return fallback;
+  const milliseconds = Number(configured);
+  if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0) {
+    throw new Error(
+      `${name} must be a positive integer number of milliseconds`,
+    );
+  }
+  return milliseconds;
 }

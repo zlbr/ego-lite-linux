@@ -50,6 +50,22 @@ exits after its input program completes. The Compose service gives Chromium a
 larger shared-memory allocation and runs it under a small init process so child
 processes are reaped cleanly.
 
+While a container job remains running, task spaces automatically hand control
+back after 10 minutes without an agent operation and delete their Chromium
+context after 60 minutes without activity. Agent operations reset both idle
+deadlines. Configure the durations in milliseconds when needed:
+
+```bash
+EGO_BROWSER_HANDOFF_IDLE_MS=600000 \
+EGO_BROWSER_DELETE_IDLE_MS=3600000 \
+docker compose run --rm -T ego-lite < task.js
+```
+
+`takeOver()` starts a new agent activity window. An explicit `handOff()` or
+`finish()` starts the deletion deadline immediately without scheduling another
+automatic handoff. A normal one-shot container exits and removes all of its
+task spaces sooner.
+
 Docker containers can reach services on the host through
 `host.docker.internal` in Docker Desktop. On Linux Engine, add
 `--add-host=host.docker.internal:host-gateway` when that route is needed.
