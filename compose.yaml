@@ -1,0 +1,10 @@
+services:
+  ego-lite:
+    build:
+      context: .
+    image: ego-lite-linux:local
+    init: true
+    stdin_open: true
+    shm_size: 1gb
+    environment:
+      EGO_BROWSER_CHROMIUM_ARGS: ${EGO_BROWSER_CHROMIUM_ARGS:-}

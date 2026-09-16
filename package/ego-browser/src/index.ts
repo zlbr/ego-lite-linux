@@ -20,6 +20,7 @@ import { installStaleEgoBrowserGuard } from "./skill-migration.js";
 import { emitUpdateNotice } from "./update-notice.js";
 import { installPageContextGuard } from "./page-context-guard.js";
 import { disposeDownloadArtifacts } from "./driver/downloads.js";
+import { installLinuxChromiumHost } from "./linux-host.js";
 
 type HelperFunction = (...args: unknown[]) => unknown;
 type EgoRuntime = Record<string, unknown> & {
@@ -142,13 +143,18 @@ export function installEgoSdk(
 }
 
 if (isDirectCli()) {
+  let disposeLinuxHost: (() => Promise<void>) | undefined;
   try {
+    if (process.env.EGO_BROWSER_LINUX_HOST === "1") {
+      disposeLinuxHost = await installLinuxChromiumHost();
+    }
     process.exitCode = await runMain();
   } catch (error) {
     console.error(error?.stack || error?.message || String(error));
     process.exitCode = 1;
   } finally {
     disposeDownloadArtifacts();
+    await disposeLinuxHost?.();
   }
 } else {
   installEgoSdk();

@@ -27,7 +27,44 @@ https://github.com/user-attachments/assets/ffe7954b-58ee-411e-b35d-ec30c58a08bc
 
 ## Quick Start
 
-ego lite runs on macOS today. Windows and Linux are on the [roadmap](https://lite.ego.app/roadmap).
+The full ego lite desktop browser runs on macOS. This repository also includes
+a headless Linux Docker port of the open-source automation runtime. Windows and
+the full Linux desktop experience remain on the
+[roadmap](https://lite.ego.app/roadmap).
+
+### Linux with Docker
+
+Build and run the container from this checkout:
+
+```bash
+docker build -t ego-lite-linux .
+
+docker run --rm -i ego-lite-linux <<'JS'
+const task = await taskSpace('example')
+const page = task.page('p1')
+await page.goto('https://example.com')
+cliLog(await page.snapshot({ scope: 'full_page' }))
+await task.finish({ keep: [] })
+JS
+```
+
+Or use the included Compose service:
+
+```bash
+docker compose build
+docker compose run --rm -T ego-lite <<'JS'
+const task = await taskSpace('example')
+const page = task.page('p1')
+await page.goto('https://example.com')
+cliLog(await page.snapshot({ scope: 'full_page' }))
+await task.finish({ keep: [] })
+JS
+```
+
+The port uses headless Chromium and supports task spaces, tabs, CDP actions,
+semantic snapshots, and screenshots. It cannot include the closed-source
+desktop UI, Chrome-profile migration, or Ego Lite's customized native snapshot
+engine. See [Linux Docker port](docs/linux-docker.md) for usage and exact scope.
 
 ### 1. Install
 

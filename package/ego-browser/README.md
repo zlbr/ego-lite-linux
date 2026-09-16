@@ -33,6 +33,21 @@ console.log(await help())
 JS
 ```
 
+On Linux, the bundled CLI can host its own headless Chromium process instead of
+requiring the native Ego Lite bindings:
+
+```bash
+EGO_BROWSER_LINUX_HOST=1 \
+EGO_BROWSER_CHROMIUM_PATH=/usr/bin/chromium \
+node dist/out/index.js <<'JS'
+const task = await taskSpace('linux')
+cliLog(await task.page('p1').snapshot())
+JS
+```
+
+The repository root `Dockerfile` packages this mode with Chromium. See
+`../../docs/linux-docker.md` for container usage and compatibility limits.
+
 Use `-h` or `--help` to print the local CLI usage.
 
 ## Skill workspace
